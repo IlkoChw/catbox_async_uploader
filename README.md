@@ -35,7 +35,7 @@ print(f"Uploaded file: {link}")
 ### Upload a Bytes
 
 ```python
-async with aiofiles.open("test_content/image_2.jpg", "rb") as f:
+async with aiofiles.open("path/to/your/file.jpg", "rb") as f:
     file_bytes = await f.read()
 link = await uploader.upload_file(file_bytes, file_name="image_2.jpg")
 print(f"Uploaded file: {link}")
