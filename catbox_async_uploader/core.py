@@ -20,8 +20,9 @@ class CatboxAsyncUploader:
     api_url: str = f"https://catbox.moe/user/api.php"
     file_url: str = "https://files.catbox.moe"
     album_url: str = "https://catbox.moe/c"
-    default_file_name: str = "file.png"
     default_timeout: int = 30
+    default_album_chunk_size: int = 50
+    default_album_time_sleep: float = 1.5
 
     def __init__(self, userhash: str = None):
         """
@@ -92,9 +93,10 @@ class CatboxAsyncUploader:
                 async with session.post(self.api_url, data=form_data) as response:
                     if response.status != 200:
                         raise CatboxError("Failed to upload file to Catbox.")
-
                     response_text = await response.text()
-                    return response_text.strip()
+                    response_text = response_text.strip()
+                    logging.debug(f"file link: {response_text}")
+                    return response_text
 
         except asyncio.TimeoutError:
             raise CatboxTimeoutError(f"Upload request timed out after {timeout} seconds.")
@@ -106,7 +108,7 @@ class CatboxAsyncUploader:
     async def upload_to_litterbox(
             self,
             file_path_or_bytes: FilePathOrBytes,
-            file_name=default_file_name,
+            file_name=None,
             duration: LitterboxDuration = LitterboxDuration.H1,
             timeout=default_timeout
     ) -> str:
@@ -131,15 +133,109 @@ class CatboxAsyncUploader:
 
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(self.api_url, data=form_data) as response:
-                    response_text = await response.text()
                     if response.status != 200:
                         raise Exception("Failed to upload file to Catbox.")
+                    response_text = await response.text()
+                    response_text = response_text.strip()
+                    logging.debug(f"litterbox file link: {response_text}")
                     return response_text.strip()
 
         except asyncio.TimeoutError:
             raise CatboxTimeoutError(f"Upload to Litterbox timed out after {timeout} seconds.")
         except aiohttp.ClientConnectionError:
             raise CatboxConnectionError("Failed to connect to Litterbox. The server might be down.")
+        except aiohttp.ClientResponseError as err:
+            raise CatboxHTTPError(f"HTTP error occurred: {err}")
+        except aiohttp.ClientError as err:
+            raise CatboxError(f"An error occurred: {err}")
+
+    async def upload_album(
+            self,
+            file_paths: list[str],
+            timeout: int = default_timeout,
+            chunk_size: int = default_album_chunk_size,
+            time_sleep: float = default_album_time_sleep,
+    ) -> list[str]:
+        """
+        Upload multiple files as an album to Catbox and return their links. Supports both file paths
+        objects
+        :param file_paths: List of file paths
+        :param timeout: Timeout in seconds for the upload request
+        :param chunk_size: The number of files to upload in each chunk to avoid overwhelming the server
+        :param time_sleep: The time in seconds to sleep between uploading chunks to avoid rate limiting
+        :return: List of URLs of the uploaded files on Catbox
+        """
+        logging.debug("Start upload album")
+        uploaded_links = []
+        try:
+            chunks = [
+                file_paths[i:i + chunk_size]
+                for i in range(0, len(file_paths), chunk_size)
+            ]
+            for index, chunk in enumerate(chunks, start=1):
+                logging.debug(f"process chunk: {index}/{len(chunks)}")
+                tasks = [
+                    self.upload_file(file_path, timeout=timeout)
+                    for file_path in chunk
+                ]
+                uploaded_links.extend(
+                    await asyncio.gather(*tasks)
+                )
+                await asyncio.sleep(time_sleep)
+            logging.debug("End upload album")
+            return uploaded_links
+        except asyncio.TimeoutError:
+            raise CatboxTimeoutError(f"Album upload timed out after {timeout} seconds.")
+        except aiohttp.ClientConnectionError:
+            raise CatboxConnectionError("Failed to connect to Catbox. The server might be down.")
+        except aiohttp.ClientResponseError as err:
+            raise CatboxHTTPError(f"HTTP error occurred: {err}")
+        except aiohttp.ClientError as err:
+            raise CatboxError(f"An error occurred: {err}")
+
+    async def upload_album_to_litterbox(
+            self,
+            file_paths: list[str],
+            timeout: int = default_timeout,
+            duration: LitterboxDuration = LitterboxDuration.H1,
+            chunk_size: int = default_album_chunk_size,
+            time_sleep: float = default_album_time_sleep,
+    ) -> list[str]:
+        """
+        Upload multiple files as an album to litterbox and return their links. Supports both file paths
+        objects
+        :param file_paths: List of file paths
+        :param timeout: Timeout in seconds for the upload request
+        :param duration: Duration for which the file will be available
+        :param chunk_size: The number of files to upload in each chunk to avoid overwhelming the server
+        :param time_sleep: The time in seconds to sleep between uploading chunks to avoid rate limiting
+        :return: List of URLs of the uploaded files on Catbox
+        """
+        try:
+            chunks = [
+                file_paths[i:i + chunk_size]
+                for i in range(0, len(file_paths), chunk_size)
+            ]
+            logging.debug("Start upload album to litterbox")
+            uploaded_links = []
+            for index, chunk in enumerate(chunks, start=1):
+                logging.debug(f"process chunk: {index}/{len(chunks)}")
+                tasks = [
+                    self.upload_to_litterbox(
+                        file_path,
+                        timeout=timeout,
+                        duration=duration,
+                    )
+                    for file_path in chunk
+                ]
+                uploaded_links.extend(await asyncio.gather(*tasks))
+                await asyncio.sleep(time_sleep)
+            logging.debug("End upload album to litterbox")
+            return uploaded_links
+        except asyncio.TimeoutError:
+            raise CatboxTimeoutError(f"Album upload timed out after {timeout} seconds.")
+        except aiohttp.ClientConnectionError:
+            raise CatboxConnectionError("Failed to connect to Catbox. The server might be down.")
         except aiohttp.ClientResponseError as err:
             raise CatboxHTTPError(f"HTTP error occurred: {err}")
         except aiohttp.ClientError as err:
@@ -176,7 +272,6 @@ class CatboxAsyncUploader:
         :param description: Description of the album
         :return: Shortcode of the created album
         """
-
         try:
             self._check_userhash_value()
             fields = [
