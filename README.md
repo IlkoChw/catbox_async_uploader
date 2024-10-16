@@ -1,6 +1,6 @@
 # Catbox Async Uploader
 
-Catbox Async Uploader is a simple Python class to upload files and URLs to [Catbox.moe](https://catbox.moe), including its temporary storage feature, **Litterbox**, and album management.
+Catbox Async Uploader is a simple Python wrapper to upload files and URLs to [Catbox.moe](https://catbox.moe), including its temporary storage feature, **Litterbox**, and album management.
 
 
 ## Usage
